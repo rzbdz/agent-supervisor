@@ -1,0 +1,203 @@
+diff --git a/packages/core/src/ports.ts b/packages/core/src/ports.ts
+index f4e25b6..2dec6fe 100644
+--- a/packages/core/src/ports.ts
++++ b/packages/core/src/ports.ts
+@@ -106,6 +106,11 @@ export interface AgentAdapter {
+     host: AgentHost,
+     extra: { tools: ToolSpec[]; resumeNativeId?: string },
+   ): Promise<AgentSession>;
++  /**
++   * Tear down any terminal view this adapter opened for a session, so the
++   * supervisor can take it back from a person's terminal.
++   */
++  releaseTerminal?(spec: { sessionId: string; cwd: string; label: string }): Promise<void>;
+ }
+ 
+ /** Durable storage for the supervisor's own state. */
+@@ -157,6 +162,8 @@ export interface PersistedSession {
+   workspaceId?: string;
+   /** Runtime autonomy; defaults to `auto`. */
+   permissionMode?: PermissionMode;
++  /** True while a person's terminal owns the agent instead of the supervisor. */
++  handedOver?: boolean;
+   nativeSessionId?: string;
+   state: 'idle' | 'stopped';
+   createdAt: string;
+diff --git a/packages/core/src/supervisor.ts b/packages/core/src/supervisor.ts
+index 07b8480..0b12064 100644
+--- a/packages/core/src/supervisor.ts
++++ b/packages/core/src/supervisor.ts
+@@ -57,6 +57,8 @@ export interface SessionView {
+   agentRole?: string;
+   /** Runtime autonomy for this session. */
+   permissionMode: PermissionMode;
++  /** True while a person's terminal owns the agent instead of the supervisor. */
++  handedOver: boolean;
+   workspaceId?: WorkspaceId;
+   state: 'starting' | 'idle' | 'working' | 'waiting' | 'stopped';
+   nativeSessionId?: string;
+@@ -149,6 +151,7 @@ export class Supervisor {
+         agentRole: session.agentRole,
+         workspaceId: session.workspaceId ? asWorkspaceId(session.workspaceId) : undefined,
+         permissionMode: session.permissionMode ?? 'auto',
++        handedOver: session.handedOver ?? false,
+         nativeSessionId: session.nativeSessionId,
+         // A stopped session stays stopped but remains addressable: sending it
+         // a message resumes its native conversation instead of losing it.
+@@ -247,6 +250,7 @@ export class Supervisor {
+       agentRole: request.agentRole,
+       workspaceId,
+       permissionMode: request.permissionMode ?? 'auto',
++      handedOver: false,
+       state: 'starting',
+       createdAt: now,
+       updatedAt: now,
+@@ -262,6 +266,7 @@ export class Supervisor {
+   /** Send a message to a session, starting its runtime again if it stopped. */
+   async send(id: SessionId, text: string): Promise<void> {
+     const managed = this.#require(id);
++    if (managed.handedOver) await this.reclaim(id);
+     if (!managed.runtime) await this.#startRuntime(managed);
+     const runtime = managed.runtime;
+     if (!runtime) throw new Error(`Session ${managed.name} has no runtime`);
+@@ -300,6 +305,39 @@ export class Supervisor {
+     await this.#persist();
+   }
+ 
++  /**
++   * Hand a session to a person's terminal.
++   *
++   * The supervisor stops owning the agent process; the terminal resumes the
++   * same native session with the agent's own CLI, so typing there is real
++   * interaction, not an emulation. `send` takes it back when the supervisor
++   * next needs to speak.
++   */
++  async takeOver(id: SessionId): Promise<void> {
++    const managed = this.#require(id);
++    if (managed.handedOver) return;
++    this.decisions.cancelForSession(id, 'The person took over the session in a terminal');
++    await managed.runtime?.stop();
++    managed.runtime = null;
++    managed.handedOver = true;
++    this.#setState(managed, 'idle', 'handed to terminal');
++    await this.#persist();
++  }
++
++  /** Take a handed-over session back from the terminal. */
++  async reclaim(id: SessionId): Promise<void> {
++    const managed = this.#require(id);
++    if (!managed.handedOver) return;
++    await this.#adapter.releaseTerminal?.({
++      sessionId: managed.id,
++      cwd: managed.cwd,
++      label: managed.name,
++    });
++    managed.handedOver = false;
++    this.#setState(managed, 'idle', 'reclaimed by supervisor');
++    await this.#persist();
++  }
++
+   async stop(id: SessionId): Promise<void> {
+     const managed = this.#require(id);
+     this.decisions.cancelForSession(id, 'Session stopped by the operator');
+@@ -527,6 +565,7 @@ export class Supervisor {
+         agentRole: s.agentRole,
+         workspaceId: s.workspaceId,
+         permissionMode: s.permissionMode,
++        handedOver: s.handedOver,
+         nativeSessionId: s.nativeSessionId,
+         state: s.state === 'stopped' ? 'stopped' : 'idle',
+         createdAt: s.createdAt,
+diff --git a/packages/server/src/http.ts b/packages/server/src/http.ts
+index f47938a..49f8828 100644
+--- a/packages/server/src/http.ts
++++ b/packages/server/src/http.ts
+@@ -48,7 +48,7 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>;
+       state: string;
+       nativeSessionId?: string;
+     },
+-    size: { cols: number; rows: number },
++    size: { cols: number; rows: number; live?: boolean },
+   ): Promise<AttachHandle> {
+     const existing = attachments.get(id);
+     if (existing) return existing;
+@@ -59,7 +59,7 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>;
+       cols: size.cols,
+       rows: size.rows,
+       nativeSessionId: session.nativeSessionId,
+-      live: session.state !== 'stopped',
++      live: size.live ?? session.state !== 'stopped',
+     });
+     attachments.set(id, handle);
+     return handle;
+@@ -207,9 +207,15 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>;
+ 
+       if (!action && req.method === 'POST') {
+         const body = await readJson(req);
++        // Opening a terminal hands the agent to the person: the supervisor
++        // releases it and the tmux window resumes the same native session, so
++        // typing there is the real CLI. The supervisor reclaims it the next
++        // time it needs to send something.
++        await supervisor.takeOver(id);
+         const handle = await attachFor(transport, id, session, {
+           cols: Number(body.cols ?? 120),
+           rows: Number(body.rows ?? 32),
++          live: false,
+         });
+         return sendJson(res, 200, {
+           transport: transport.kind,
+@@ -218,8 +224,13 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>;
+           attachCommand: handle.attachCommand,
+           cols: handle.cols,
+           rows: handle.rows,
++          interactive: true,
+         });
+       }
++      if (action === 'release' && req.method === 'POST') {
++        await supervisor.reclaim(id);
++        return sendJson(res, 200, { ok: true });
++      }
+       if (action === 'input' && req.method === 'POST') {
+         const handle = attachments.get(id);
+         if (!handle) return sendJson(res, 409, { error: 'not attached' });
+diff --git a/packages/server/src/terminal.ts b/packages/server/src/terminal.ts
+index 32a7fa6..c520e79 100644
+--- a/packages/server/src/terminal.ts
++++ b/packages/server/src/terminal.ts
+@@ -50,6 +50,11 @@ export interface TerminalTransport {
+   open(spec: AttachSpec): Promise<AttachHandle>;
+   /** Remove whatever the transport keeps for a session. */
+   reap?(sessionId: string): Promise<void>;
++  /**
++   * Whether the view is live (a mirror of the agent the supervisor runs) or
++   * interactive (the person typing into a resumed agent).
++   */
++  interactive?(spec: AttachSpec): boolean;
+ }
+ 
+ /**
+diff --git a/web/index.html b/web/index.html
+index e8de587..e681ddb 100644
+--- a/web/index.html
++++ b/web/index.html
+@@ -629,15 +629,13 @@ async function ensureAttach() {
+   ui.lastFrame = '';
+   ui.term.reset();
+   $('attachCmd').textContent = ui.attach.attachCommand;
+-  $('termState').textContent = ui.attach.live
+-    ? 'live agent — read-only mirror of its session'
+-    : 'stopped agent — resumed in tmux, you can type';
+-  $('termcomposer').hidden = Boolean(ui.attach.live);
++  // The terminal is the agent: this pane is a real session, not a preview.
++  $('termState').textContent = 'interactive — this terminal owns the session';
++  $('termcomposer').hidden = true;
+   const es = new EventSource(`/api/sessions/${state.selected}/attach/stream`);
+   ui.es = es;
+-  // Frames are full screen redraws. While a person types, redrawing the whole
+-  // screen on every frame fights the local echo and looks like lost input, so
+-  // a keystroke briefly suppresses the redraw and the next frame wins.
++  // Frames are full screen redraws of the tmux pane. xterm echoes keys
++  // locally; the next frame from the pane confirms what the shell received.
+   es.onmessage = (m) => {
+     let payload;
+     try { payload = JSON.parse(m.data); } catch { return; }
