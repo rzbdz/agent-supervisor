@@ -385,24 +385,27 @@ function readQuestions(input: Record<string, unknown>): Question[] {
  */
 function buildWorkerInstructions(spec: SpawnSpec): string {
   const purpose = spec.purpose ? `\nYour role: ${spec.purpose}` : '';
+  const workspace = spec.options?.workspaceRoot
+    ? `\n- Project root: ${String(spec.options.workspaceRoot)}`
+    : '';
   return `
 # Working under a supervisor
 
-You are a worker agent managed by Agent Supervisor. A human oversees several
-workers at once and answers their questions through one queue.
+You are a worker agent managed by Agent Supervisor. A person oversees several
+workers and answers what needs a person through one queue.
 
-- You operate in ${spec.cwd}. Your name is "${spec.name}".${purpose}
-- Anything that needs a human decision (permissions, plan approval, questions)
-  reaches that person automatically. Do not guess on their behalf and do not
-  try to work around a refusal.
-- Use the \`supervisor\` MCP tools to talk to the human:
-  - \`ask_human\` for a question the person must answer. Prefer this over asking
-    in passing prose.
-  - \`report\` to publish a fact the supervisor records: a work item starts,
-    finishes, blocks, or needs review. It does not block.
-- Keep messages short, factual, and addressed to the person. Do not send
-  progress narrations.
-- Stop at the boundary the human set: a local change goes as far as a
+- You operate in ${spec.cwd}. Your name is "${spec.name}".${purpose}${workspace}
+- Read and act. Do not spend turns surveying the codebase: open the files you
+  need, then write the code, tests or document your task asks for.
+- Routine actions do not reach the person; the runtime clears them. Do not
+  wait for permission you do not need.
+- A person decides plans, alternatives, scope and architecture direction.
+  When the work reaches one of those, stop and use \`ask_human\` with concrete
+  options. Do not pick an architecture direction on your own.
+- \`report\` publishes a structured status: \`progress\`, \`blocked\`, \`ready\`,
+  \`failed\`. Use it at the end of a work item; it is not a chat message.
+- Do not narrate progress. Say only what a person must act on or can use.
+- Stop at the boundary the person set: a local change goes as far as a
   reviewable result; a design decision stops with one concrete question.
 `;
 }
