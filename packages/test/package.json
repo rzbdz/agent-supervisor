@@ -1,0 +1,20 @@
+{
+  "name": "@supervisor/test",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@supervisor/agent-claude": "workspace:*",
+    "@supervisor/cli": "workspace:*",
+    "@supervisor/core": "workspace:*",
+    "@supervisor/protocol": "workspace:*",
+    "@supervisor/server": "workspace:*"
+  },
+  "devDependencies": {
+    "vitest": "^3.2.4"
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "agent-supervisor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.32.1",
+  "description": "A supervisor that runs multiple coding agents and funnels every human decision to one place.",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "supervisor": "node --import tsx packages/server/src/main.ts",
+    "sv": "node --import tsx packages/cli/src/main.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

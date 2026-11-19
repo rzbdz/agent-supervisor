@@ -1,0 +1,15 @@
+{
+  "name": "@supervisor/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@supervisor/agent-claude": "workspace:*",
+    "@supervisor/core": "workspace:*",
+    "@supervisor/protocol": "workspace:*",
+    "zod": "^4.6.7"
+  }
+}

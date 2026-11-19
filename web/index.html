@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Supervisor</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1d2129;
+    --line: #2a303a;
+    --text: #e6e9ef;
+    --muted: #8b93a1;
+    --accent: #6ea8fe;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --bad: #f87171;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --panel-2: #f1f3f6;
+      --line: #e2e5ea;
+      --text: #1a1d23;
+      --muted: #667085;
+      --accent: #2563eb;
+      --ok: #15803d;
+      --warn: #a16207;
+      --bad: #b91c1c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); }
+  header .dot.live { background: var(--ok); }
+  header .spacer { flex: 1; }
+  header .hint { color: var(--muted); font-size: 12px; }
+  main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(220px, 300px) 1fr minmax(280px, 420px);
+    gap: 1px;
+    background: var(--line);
+    min-height: 0;
+  }
+  section {
+    background: var(--bg);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .head {
+    padding: 10px 14px;
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .head .count {
+    margin-left: auto;
+    font-variant-numeric: tabular-nums;
+  }
+  .scroll { overflow: auto; padding: 8px; }
+  .session {
+    padding: 9px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .session:hover { background: var(--panel-2); }
+  .session.active { border-color: var(--accent); background: var(--panel-2); }
+  .session .row1 { display: flex; align-items: center; gap: 8px; }
+  .session .name { font-weight: 600; font-size: 13px; }
+  .session .purpose {
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .badge {
+    margin-left: auto;
+    font-size: 11px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .badge.waiting { color: var(--warn); border-color: var(--warn); }
+  .badge.working { color: var(--accent); border-color: var(--accent); }
+  .badge.idle { color: var(--ok); border-color: var(--ok); }
+  .badge.stopped { color: var(--bad); border-color: var(--bad); }
+  .decision {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .decision.pending { border-color: var(--warn); }
+  .decision .meta {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .5px;
+    margin-bottom: 4px;
+  }
+  .decision .summary { font-weight: 600; margin-bottom: 6px; }
+  .decision pre {
+    margin: 0 0 8px;
+    padding: 8px;
+    background: var(--panel-2);
+    border-radius: 8px;
+    overflow: auto;
+    max-height: 180px;
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  button {
+    font: inherit;
+    font-size: 12px;
+    padding: 5px 10px;
+    border-radius: 7px;
+    border: 1px solid var(--line);
+    background: var(--panel-2);
+    color: var(--text);
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); border-color: var(--bad); background: transparent; }
+  button:disabled { opacity: .45; cursor: default; }
+  input, textarea {
+    font: inherit;
+    font-size: 13px;
+    width: 100%;
+    padding: 7px 9px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    color: var(--text);
+  }
+  input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .composer {
+    border-top: 1px solid var(--line);
+    padding: 10px;
+    display: flex;
+    gap: 8px;
+    background: var(--panel);
+  }
+  .composer input { flex: 1; }
+  .feed { padding: 10px 12px; }
+  .ev {
+    padding: 3px 0;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    border-bottom: 1px dashed transparent;
+    word-break: break-word;
+  }
+  .ev .t { color: var(--muted); margin-right: 6px; }
+  .ev.assistant .body { color: var(--text); }
+  .ev.user .body { color: var(--accent); }
+  .ev.tool .body { color: var(--muted); }
+  .ev.error .body { color: var(--bad); }
+  .ev.state .body { color: var(--warn); }
+  .empty { color: var(--muted); padding: 16px; text-align: center; font-size: 13px; }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
+    main section:nth-child(3) { max-height: 40vh; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="dot"></span>
+  <h1>Agent Supervisor</h1>
+  <span class="spacer"></span>
+  <span class="hint" id="hint">connecting…</span>
+</header>
+<main>
+  <section>
+    <div class="head">Sessions <span class="count" id="sessionCount"></span></div>
+    <div class="scroll" id="sessions"></div>
+  </section>
+  <section>
+    <div class="head">Decisions <span class="count" id="decisionCount"></span></div>
+    <div class="scroll" id="decisions"></div>
+    <div class="composer">
+      <input id="message" placeholder="Message the selected session…" />
+      <button class="primary" id="send">Send</button>
+    </div>
+  </section>
+  <section>
+    <div class="head">Activity <span class="count" id="activityFor"></span></div>
+    <div class="scroll feed" id="feed"></div>
+  </section>
+</main>
+<script type="module">
+const $ = (id) => document.getElementById(id);
+const state = { sessions: [], decisions: [], selected: null, feed: [] };
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
+async function api(path, init) {
+  const res = await fetch(path, init);
+  if (!res.ok) throw new Error(`${path}: ${res.status}`);
+  return res.status === 204 ? null : res.json();
+}
+
+function renderSessions() {
+  $('sessionCount').textContent = state.sessions.length || '';
+  if (!state.sessions.length) {
+    $('sessions').innerHTML = '<div class="empty">No sessions yet.</div>';
+    return;
+  }
+  $('sessions').innerHTML = state.sessions.map((s) => `
+    <div class="session ${s.id === state.selected ? 'active' : ''}" data-id="${s.id}">
+      <div class="row1">
+        <span class="name">${esc(s.name)}</span>
+        <span class="badge ${esc(s.state)}">${esc(s.state)}</span>
+      </div>
+      <div class="purpose">${esc(s.role === 'orchestrator' ? 'orchestrator' : (s.purpose || s.cwd))}</div>
+    </div>`).join('');
+  for (const el of document.querySelectorAll('.session')) {
+    el.onclick = () => select(el.dataset.id);
+  }
+}
+
+function decisionBody(d) {
+  if (d.kind === 'permission') {
+    const p = d.payload;
+    return `<pre>${esc(JSON.stringify(p.input, null, 2))}</pre>`;
+  }
+  if (d.kind === 'question') {
+    const qs = d.payload.questions || [];
+    return qs.map((q, i) => `
+      <div style="margin-bottom:8px">
+        <div style="margin-bottom:6px">${esc(q.question)}</div>
+        ${(q.options || []).map((o) => `<button data-answer="${esc(o.label)}" data-q="${i}" data-text="${esc(q.question)}">${esc(o.label)}</button>`).join(' ')}
+      </div>`).join('') +
+      `<input data-free="${esc(qs[0]?.question || '')}" placeholder="Or type an answer…" />`;
+  }
+  return `<pre>${esc(d.payload.plan || '')}</pre>`;
+}
+
+function renderDecisions() {
+  const pending = state.decisions.filter((d) => d.status === 'pending');
+  $('decisionCount').textContent = pending.length ? `${pending.length} waiting` : '';
+  if (!state.decisions.length) {
+    $('decisions').innerHTML = '<div class="empty">Nothing is waiting on you.</div>';
+    return;
+  }
+  $('decisions').innerHTML = state.decisions.map((d) => `
+    <div class="decision ${d.status}" data-id="${d.id}">
+      <div class="meta"><span>${esc(d.sessionName)}</span><span>${esc(d.kind)}</span><span>${esc(d.status)}</span></div>
+      <div class="summary">${esc(d.summary)}</div>
+      ${d.status === 'pending' ? decisionBody(d) : ''}
+      ${d.status === 'pending' ? `<div class="actions">
+        ${d.kind === 'question' ? '' : '<button class="primary" data-act="allow">Approve</button>'}
+        ${d.kind === 'question' ? '' : '<button class="danger" data-act="deny">Decline</button>'}
+        <button data-act="allow" hidden></button>
+      </div>` : ''}
+      ${d.status === 'pending' && d.kind === 'question' ? `<div class="actions"><button class="primary" data-act="answer-free">Answer</button></div>` : ''}
+    </div>`).join('');
+
+  for (const card of document.querySelectorAll('.decision.pending')) {
+    const id = card.dataset.id;
+    const decision = state.decisions.find((d) => d.id === id);
+    for (const btn of card.querySelectorAll('button')) {
+      if (btn.dataset.answer !== undefined) {
+        btn.onclick = () => answer(id, { kind: 'question', answers: { [btn.dataset.text]: btn.dataset.answer } });
+      } else if (btn.dataset.act === 'allow') {
+        btn.onclick = () => answer(id, { kind: decision.kind, behavior: 'allow' });
+      } else if (btn.dataset.act === 'deny') {
+        btn.onclick = () => {
+          const message = prompt('Why should the agent stop? (shown to it)') || 'Declined by the operator.';
+          answer(id, { kind: decision.kind, behavior: 'deny', message });
+        };
+      } else if (btn.dataset.act === 'answer-free') {
+        const input = card.querySelector('input[data-free]');
+        btn.onclick = () => answer(id, { kind: 'question', answers: { [input.dataset.free]: input.value } });
+      }
+    }
+  }
+}
+
+async function answer(id, payload) {
+  try {
+    await api(`/api/decisions/${id}/answer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    await refresh();
+  } catch (error) {
+    $('hint').textContent = `answer failed: ${error.message}`;
+  }
+}
+
+function renderFeed() {
+  const session = state.sessions.find((s) => s.id === state.selected);
+  $('activityFor').textContent = session ? session.name : '';
+  if (!state.feed.length) {
+    $('feed').innerHTML = '<div class="empty">Select a session to see its activity.</div>';
+    return;
+  }
+  $('feed').innerHTML = state.feed.map((e) => {
+    const at = new Date(e.at).toLocaleTimeString();
+    let cls = '', body = '';
+    switch (e.type) {
+      case 'text': cls = e.role; body = e.text; break;
+      case 'tool': cls = 'tool'; body = `→ ${e.toolName} ${JSON.stringify(e.input).slice(0, 240)}`; break;
+      case 'tool_result': cls = 'tool'; body = `← ${e.outcome}`; break;
+      case 'turn': body = e.phase === 'end' ? `turn end: ${(e.result || '').slice(0, 400)}` : 'turn start'; break;
+      case 'state': cls = 'state'; body = `state → ${e.state}`; break;
+      case 'decision': cls = 'state'; body = `decision ${e.phase} ${e.decisionId.slice(0, 8)}`; break;
+      case 'report': cls = 'state'; body = `report ${e.status}: ${e.summary}`; break;
+      case 'error': cls = 'error'; body = e.message; break;
+      default: body = JSON.stringify(e).slice(0, 300);
+    }
+    return `<div class="ev ${cls}"><span class="t">${at}</span><span class="body">${esc(body)}</span></div>`;
+  }).join('');
+  $('feed').scrollTop = $('feed').scrollHeight;
+}
+
+async function select(id) {
+  state.selected = id;
+  renderSessions();
+  if (id) {
+    state.feed = await api(`/api/sessions/${id}/events?limit=120`);
+    renderFeed();
+  }
+}
+
+async function refresh() {
+  const [sessions, decisions] = await Promise.all([
+    api('/api/sessions'),
+    api('/api/decisions'),
+  ]);
+  state.sessions = sessions;
+  state.decisions = decisions.slice().reverse();
+  if (!state.selected && sessions.length) state.selected = sessions[0].id;
+  renderSessions();
+  renderDecisions();
+  if (state.selected) renderFeed();
+}
+
+$('send').onclick = async () => {
+  const text = $('message').value.trim();
+  if (!text || !state.selected) return;
+  $('message').value = '';
+  try {
+    await api(`/api/sessions/${state.selected}/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+  } catch (error) {
+    $('hint').textContent = `send failed: ${error.message}`;
+  }
+};
+$('message').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('send').click(); });
+
+// Live updates: SSE for events, polling for the aggregate view.
+const source = new EventSource('/api/events');
+source.onopen = () => {
+  $('dot').classList.add('live');
+  $('hint').textContent = 'connected';
+};
+source.onerror = () => {
+  $('dot').classList.remove('live');
+  $('hint').textContent = 'reconnecting…';
+};
+source.onmessage = (message) => {
+  let event;
+  try { event = JSON.parse(message.data); } catch { return; }
+  if (event.sessionId === state.selected && event.type !== 'state') {
+    state.feed.push(event);
+    if (state.feed.length > 300) state.feed.shift();
+    renderFeed();
+  }
+};
+
+await refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

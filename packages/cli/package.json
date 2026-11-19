@@ -1,0 +1,13 @@
+{
+  "name": "@supervisor/cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@supervisor/protocol": "workspace:*",
+    "commander": "^15.1.0"
+  }
+}
