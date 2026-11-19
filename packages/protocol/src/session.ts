@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { DecisionId, SessionId } from './ids.ts';
+import type { DecisionId, SessionId, WorkspaceId } from './ids.ts';
 
 /**
  * Lifecycle of a managed agent session, as the supervisor sees it.
@@ -56,6 +56,47 @@ export interface SpawnSpec {
   purpose?: string;
   /** Model alias or id, adapter-defined. */
   model?: string;
+  /** Workspace this session belongs to, when grouped. */
+  workspaceId?: WorkspaceId;
+  /** Organization role of this agent, e.g. architect / backend / frontend. */
+  role?: string;
   /** Extra adapter-specific settings (adapter validates them). */
   options?: Record<string, unknown>;
+}
+
+/**
+ * A workspace groups the agents working on one project.
+ *
+ * It mirrors the host's own workspace notion (DSH's `workspaceRegistry`,
+ * an editor's project root): a directory plus the agents that work in it.
+ * The supervisor keeps its own record so the same grouping exists on every
+ * presentation, including ones that have no host workspace concept.
+ */
+export interface Workspace {
+  id: WorkspaceId;
+  name: string;
+  /** Absolute directory the workspace's agents work in. */
+  root: string;
+  description?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** What the supervisor needs to register a workspace. */
+export interface WorkspaceSpec {
+  name: string;
+  root: string;
+  description?: string;
+  /** Register an existing id instead of minting one (used on restore). */
+  id?: WorkspaceId;
+}
+
+/**
+ * The identity of an agent, as the three facts that must stay together:
+ * the native session it runs, the project it belongs to, and its role.
+ */
+export interface AgentIdentity {
+  nativeSessionId: string;
+  workspaceId: WorkspaceId;
+  role: string;
 }

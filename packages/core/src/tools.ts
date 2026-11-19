@@ -73,6 +73,47 @@ export function workerTools(supervisor: Supervisor): ToolSpec[] {
 export function orchestratorTools(supervisor: Supervisor): ToolSpec[] {
   return [
     {
+      name: 'list_workspaces',
+      description:
+        'List registered workspaces (project directories) with the agents grouped under each.',
+      audience: 'orchestrator',
+      autoApprove: true,
+      inputSchema: {},
+      handler: async () => {
+        const rows = supervisor.listWorkspaces().map((w) => ({
+          id: w.id,
+          name: w.name,
+          root: w.root,
+          agents: supervisor.workspaceSessions(w.id).map((s) => ({
+            name: s.name,
+            role: s.agentRole ?? s.role,
+            state: s.state,
+          })),
+        }));
+        return { content: JSON.stringify(rows, null, 2) };
+      },
+    },
+    {
+      name: 'open_workspace',
+      description:
+        'Register a project directory as a workspace so several agents can be grouped under it. Idempotent by root.',
+      audience: 'orchestrator',
+      autoApprove: true,
+      inputSchema: {
+        name: z.string(),
+        root: z.string().describe('Absolute project directory.'),
+        description: z.string().optional(),
+      },
+      handler: async (args) => {
+        const workspace = await supervisor.registerWorkspace({
+          name: String(args.name),
+          root: String(args.root),
+          description: args.description ? String(args.description) : undefined,
+        });
+        return { content: JSON.stringify({ id: workspace.id, name: workspace.name }) };
+      },
+    },
+    {
       name: 'list_sessions',
       description: 'List every managed session with its state and purpose.',
       audience: 'orchestrator',
@@ -99,6 +140,14 @@ export function orchestratorTools(supervisor: Supervisor): ToolSpec[] {
         cwd: z.string().describe('Absolute path the worker operates in.'),
         purpose: z.string().describe('One line: what this worker owns.'),
         model: z.string().optional(),
+        agentRole: z
+          .string()
+          .optional()
+          .describe('Organization role, e.g. architect, backend, frontend.'),
+        workspaceId: z
+          .string()
+          .optional()
+          .describe('Workspace to group this agent under; defaults to the one at cwd.'),
         task: z
           .string()
           .optional()
@@ -110,6 +159,10 @@ export function orchestratorTools(supervisor: Supervisor): ToolSpec[] {
           cwd: String(args.cwd),
           purpose: String(args.purpose ?? ''),
           model: args.model ? String(args.model) : undefined,
+          agentRole: args.agentRole ? String(args.agentRole) : undefined,
+          workspaceId: args.workspaceId
+            ? (String(args.workspaceId) as import('@supervisor/protocol').WorkspaceId)
+            : undefined,
         });
         if (typeof args.task === 'string' && args.task.trim()) {
           // Send through the supervisor so the session is marked working

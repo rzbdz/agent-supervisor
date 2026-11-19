@@ -6,6 +6,7 @@ import type { Supervisor } from '@supervisor/core';
 import {
   asDecisionId,
   asSessionId,
+  asWorkspaceId,
   decisionAnswerSchema,
 } from '@supervisor/protocol';
 
@@ -79,9 +80,24 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
 
     if (path === '/api/state' && req.method === 'GET') {
       return sendJson(res, 200, {
+        workspaces: supervisor.listWorkspaces(),
         sessions: supervisor.listSessions(),
         decisions: supervisor.decisions.list(),
       });
+    }
+
+    if (path === '/api/workspaces' && req.method === 'GET') {
+      return sendJson(res, 200, supervisor.listWorkspaces());
+    }
+
+    if (path === '/api/workspaces' && req.method === 'POST') {
+      const body = await readJson(req);
+      const workspace = await supervisor.registerWorkspace({
+        name: String(body.name),
+        root: String(body.root),
+        description: body.description ? String(body.description) : undefined,
+      });
+      return sendJson(res, 201, workspace);
     }
 
     if (path === '/api/sessions' && req.method === 'GET') {
@@ -96,6 +112,10 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
         purpose: body.purpose ? String(body.purpose) : undefined,
         model: body.model ? String(body.model) : undefined,
         role: body.role === 'orchestrator' ? 'orchestrator' : 'worker',
+        agentRole: body.agentRole ? String(body.agentRole) : undefined,
+        workspaceId: body.workspaceId
+          ? asWorkspaceId(String(body.workspaceId))
+          : undefined,
         task: body.task ? String(body.task) : undefined,
       });
       return sendJson(res, 201, session);

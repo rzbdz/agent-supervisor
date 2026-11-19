@@ -20,3 +20,8 @@ export const asConversationId = (value: string): ConversationId => value as Conv
 
 /** Id of the main conversation the human talks to (the router session). */
 export type ConversationId = Branded<string, 'ConversationId'>;
+
+/** Id of a workspace: a project directory plus the agents working in it. */
+export type WorkspaceId = Branded<string, 'WorkspaceId'>;
+
+export const asWorkspaceId = (value: string): WorkspaceId => value as WorkspaceId;

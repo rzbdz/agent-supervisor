@@ -122,6 +122,8 @@ export interface LoggedEvent {
  */
 export interface PersistedState {
   sessions: PersistedSession[];
+  /** Workspaces, when the deployment groups agents into projects. */
+  workspaces?: PersistedWorkspace[];
   /** Decisions that were pending when the process stopped. */
   pendingDecisions: PersistedDecision[];
 }
@@ -134,8 +136,21 @@ export interface PersistedSession {
   purpose?: string;
   model?: string;
   role?: 'worker' | 'orchestrator';
+  /** Organization role within a workspace, e.g. architect. */
+  agentRole?: string;
+  workspaceId?: string;
   nativeSessionId?: string;
   state: 'idle' | 'stopped';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** A workspace as it is persisted: a directory plus the agents in it. */
+export interface PersistedWorkspace {
+  id: string;
+  name: string;
+  root: string;
+  description?: string;
   createdAt: string;
   updatedAt: string;
 }

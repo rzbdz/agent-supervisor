@@ -2,8 +2,10 @@ import type {
   AgentEvent,
   SessionEvent,
   SessionId,
+  Workspace,
+  WorkspaceId,
 } from '@supervisor/protocol';
-import { asSessionId } from '@supervisor/protocol';
+import { asSessionId, asWorkspaceId } from '@supervisor/protocol';
 import type {
   AgentAdapter,
   AgentHost,
@@ -34,6 +36,10 @@ export interface OpenSessionRequest {
   task?: string;
   /** Use the orchestrator tool set instead of the worker set. */
   role?: 'worker' | 'orchestrator';
+  /** Workspace the session belongs to. Defaults to the workspace at `cwd`. */
+  workspaceId?: WorkspaceId;
+  /** Organization role within the workspace, e.g. architect / backend. */
+  agentRole?: string;
 }
 
 export interface SessionView {
@@ -44,6 +50,9 @@ export interface SessionView {
   purpose?: string;
   model?: string;
   role: 'worker' | 'orchestrator';
+  /** Organization role within its workspace, when set. */
+  agentRole?: string;
+  workspaceId?: WorkspaceId;
   state: 'starting' | 'idle' | 'working' | 'waiting' | 'stopped';
   nativeSessionId?: string;
   createdAt: string;
@@ -65,6 +74,7 @@ export class Supervisor {
   readonly decisions = new DecisionQueue();
 
   readonly #sessions = new Map<SessionId, ManagedSession>();
+  readonly #workspaces = new Map<WorkspaceId, Workspace>();
   #saveChain: Promise<void> = Promise.resolve();
   #seq = 0;
 
@@ -110,6 +120,16 @@ export class Supervisor {
         createdAt: pending.createdAt,
       })),
     );
+    for (const workspace of state.workspaces ?? []) {
+      this.#workspaces.set(asWorkspaceId(workspace.id), {
+        id: asWorkspaceId(workspace.id),
+        name: workspace.name,
+        root: workspace.root,
+        description: workspace.description,
+        createdAt: workspace.createdAt,
+        updatedAt: workspace.updatedAt,
+      });
+    }
     for (const session of state.sessions) {
       this.#sessions.set(asSessionId(session.id), {
         id: asSessionId(session.id),
@@ -119,6 +139,8 @@ export class Supervisor {
         purpose: session.purpose,
         model: session.model,
         role: session.role ?? 'worker',
+        agentRole: session.agentRole,
+        workspaceId: session.workspaceId ? asWorkspaceId(session.workspaceId) : undefined,
         nativeSessionId: session.nativeSessionId,
         // A stopped session stays stopped but remains addressable: sending it
         // a message resumes its native conversation instead of losing it.
@@ -153,7 +175,45 @@ export class Supervisor {
     return view;
   }
 
-  /** Start a session, optionally sending its first instruction. */
+  /** Register or update a workspace. Re-registering a root is idempotent. */
+  async registerWorkspace(spec: {
+    name: string;
+    root: string;
+    description?: string;
+    id?: WorkspaceId;
+  }): Promise<Workspace> {
+    const existing = [...this.#workspaces.values()].find((w) => w.root === spec.root);
+    if (existing) return existing;
+    const now = new Date().toISOString();
+    const workspace: Workspace = {
+      id: spec.id ?? asWorkspaceId(crypto.randomUUID()),
+      name: spec.name,
+      root: spec.root,
+      description: spec.description,
+      createdAt: now,
+      updatedAt: now,
+    };
+    this.#workspaces.set(workspace.id, workspace);
+    await this.#persist();
+    return workspace;
+  }
+
+  listWorkspaces(): Workspace[] {
+    return [...this.#workspaces.values()].sort((a, b) =>
+      a.createdAt.localeCompare(b.createdAt),
+    );
+  }
+
+  getWorkspace(id: WorkspaceId): Workspace | undefined {
+    return this.#workspaces.get(id);
+  }
+
+  /** The sessions grouped under a workspace, in creation order. */
+  workspaceSessions(id: WorkspaceId): SessionView[] {
+    return this.listSessions().filter((s) => s.workspaceId === id);
+  }
+
+  /** Create a session, optionally sending its first instruction. */
   async openSession(request: OpenSessionRequest): Promise<SessionView> {
     const live = [...this.#sessions.values()].find(
       (s) => s.name === request.name && s.state !== 'stopped',
@@ -163,6 +223,11 @@ export class Supervisor {
     }
     const id = asSessionId(crypto.randomUUID());
     const now = new Date().toISOString();
+    const workspaceId =
+      request.workspaceId ??
+      [...this.#workspaces.values()].find(
+        (w) => w.root === request.cwd || request.cwd.startsWith(`${w.root}/`),
+      )?.id;
     const managed: ManagedSession = {
       id,
       name: request.name,
@@ -171,6 +236,8 @@ export class Supervisor {
       purpose: request.purpose,
       model: request.model,
       role: request.role ?? 'worker',
+      agentRole: request.agentRole,
+      workspaceId,
       state: 'starting',
       createdAt: now,
       updatedAt: now,
@@ -247,6 +314,9 @@ export class Supervisor {
 
   async #startRuntime(managed: ManagedSession): Promise<void> {
     const host = this.#makeHost(managed);
+    const workspace = managed.workspaceId
+      ? this.#workspaces.get(managed.workspaceId)
+      : undefined;
     managed.runtime = await this.#adapter.start(
       {
         id: managed.id,
@@ -254,6 +324,9 @@ export class Supervisor {
         cwd: managed.cwd,
         purpose: managed.purpose,
         model: managed.model,
+        workspaceId: managed.workspaceId,
+        role: managed.agentRole,
+        options: workspace ? { workspaceRoot: workspace.root } : undefined,
       },
       host,
       {
@@ -352,6 +425,14 @@ export class Supervisor {
    */
   #persist(): Promise<void> {
     const snapshot: PersistedState = {
+      workspaces: [...this.#workspaces.values()].map((w) => ({
+        id: w.id,
+        name: w.name,
+        root: w.root,
+        description: w.description,
+        createdAt: w.createdAt,
+        updatedAt: w.updatedAt,
+      })),
       sessions: [...this.#sessions.values()].map((s) => ({
         id: s.id,
         name: s.name,
@@ -360,6 +441,8 @@ export class Supervisor {
         purpose: s.purpose,
         model: s.model,
         role: s.role,
+        agentRole: s.agentRole,
+        workspaceId: s.workspaceId,
         nativeSessionId: s.nativeSessionId,
         state: s.state === 'stopped' ? 'stopped' : 'idle',
         createdAt: s.createdAt,
