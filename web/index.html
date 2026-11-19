@@ -194,6 +194,29 @@
   .ev.error .body { color: var(--bad); }
   .ev.state .body { color: var(--warn); }
   .empty { color: var(--muted); padding: 16px; text-align: center; font-size: 13px; }
+  .head .tab {
+    font-size: 11px; text-transform: uppercase; letter-spacing: .6px;
+    background: transparent; border: 1px solid transparent; color: var(--muted);
+    padding: 3px 8px; border-radius: 7px;
+  }
+  .head .tab.active { color: var(--text); border-color: var(--line); background: var(--panel-2); }
+  .termbar {
+    display: flex; gap: 8px; align-items: center; padding: 6px 10px;
+    border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  .termbar .mono {
+    font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    flex: 1;
+  }
+  .term {
+    margin: 0; flex: 1; overflow: auto; padding: 10px 12px;
+    background: #0b0d11; color: #d7dbe2;
+    font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+    white-space: pre; tab-size: 4;
+  }
+  .ev.line { display: flex; gap: 8px; }
+  .ev.line .role { color: var(--muted); min-width: 44px; }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
     main section:nth-child(3) { max-height: 40vh; }
@@ -221,8 +244,23 @@
     </div>
   </section>
   <section>
-    <div class="head">Activity <span class="count" id="activityFor"></span></div>
+    <div class="head">
+      <button class="tab active" data-tab="terminal">Terminal</button>
+      <button class="tab" data-tab="transcript">Session</button>
+      <button class="tab" data-tab="activity">Activity</button>
+      <span class="count" id="activityFor"></span>
+    </div>
+    <div class="termbar" id="termbar" hidden>
+      <span class="mono" id="attachCmd"></span>
+      <button id="termReconnect" title="Re-attach the terminal">Reattach</button>
+    </div>
+    <pre class="term" id="term" hidden></pre>
+    <div class="scroll feed" id="transcript" hidden></div>
     <div class="scroll feed" id="feed"></div>
+    <div class="composer" id="termcomposer" hidden>
+      <input id="terminput" placeholder="Type into the terminal…" />
+      <button id="termsend">Send</button>
+    </div>
   </section>
 </main>
 <script type="module">
@@ -353,7 +391,10 @@ function renderFeed() {
 }
 
 async function select(id) {
+  const changed = state.selected !== id;
   state.selected = id;
+  if (changed) { detachStream(); ui.attachFor = null; }
+  showTab(ui.tab);
   renderSessions();
   if (id) {
     state.feed = await api(`/api/sessions/${id}/events?limit=120`);
@@ -390,6 +431,83 @@ $('send').onclick = async () => {
 };
 $('message').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('send').click(); });
 
+// --- terminal / transcript panel -----------------------------------------
+const ui = { tab: 'terminal', attach: null, attachFor: null, es: null };
+
+function showTab(tab) {
+  ui.tab = tab;
+  for (const b of document.querySelectorAll('.head .tab')) b.classList.toggle('active', b.dataset.tab === tab);
+  $('term').hidden = tab !== 'terminal';
+  $('termbar').hidden = tab !== 'terminal';
+  $('termcomposer').hidden = tab !== 'terminal';
+  $('transcript').hidden = tab !== 'transcript';
+  $('feed').hidden = tab !== 'activity';
+  if (tab === 'terminal') ensureAttach();
+  if (tab === 'transcript') loadTranscript();
+}
+for (const b of document.querySelectorAll('.head .tab')) b.onclick = () => showTab(b.dataset.tab);
+
+function detachStream() {
+  if (ui.es) { ui.es.close(); ui.es = null; }
+}
+
+/**
+ * Open (or reuse) this session's terminal and follow its output.
+ *
+ * The pane shows the agent's native terminal: the tmux window the supervisor
+ * created for the session, so what a person sees here is exactly what they
+ * would see attaching with `tmux attach`. Input goes back through the same
+ * route, which is how an agent blocked on nothing can still be typed into.
+ */
+async function ensureAttach() {
+  if (!state.selected) return;
+  if (ui.attachFor === state.selected && ui.es) return;
+  detachStream();
+  ui.attachFor = state.selected;
+  const size = { cols: Math.max(60, Math.floor($('term').clientWidth / 7.2)), rows: Math.max(20, Math.floor($('term').clientHeight / 16)) };
+  try {
+    ui.attach = await api(`/api/sessions/${state.selected}/attach`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(size),
+    });
+  } catch (error) {
+    $('term').textContent = `terminal unavailable: ${error.message}`;
+    return;
+  }
+  $('attachCmd').textContent = ui.attach.attachCommand;
+  const es = new EventSource(`/api/sessions/${state.selected}/attach/stream`);
+  ui.es = es;
+  es.onmessage = (m) => {
+    let payload;
+    try { payload = JSON.parse(m.data); } catch { return; }
+    const frame = String(payload.frame || '').replace(/\u0000+$/, '');
+    const term = $('term');
+    const atBottom = term.scrollTop + term.clientHeight >= term.scrollHeight - 24;
+    term.textContent = frame;
+    if (atBottom) term.scrollTop = term.scrollHeight;
+  };
+  es.onerror = () => { $('attachCmd').textContent = `${ui.attach?.attachCommand ?? ''} — disconnected`; };
+}
+
+$('termReconnect').onclick = () => { if (state.selected) { ui.attachFor = null; ensureAttach(); } };
+$('termsend').onclick = async () => {
+  const text = $('terminput').value;
+  if (!text || !state.selected) return;
+  $('terminput').value = '';
+  await api(`/api/sessions/${state.selected}/attach/input`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: text + '\r' }),
+  }).catch(() => undefined);
+};
+$('terminput').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('termsend').click(); });
+
+async function loadTranscript() {
+  if (!state.selected) return;
+  const data = await api(`/api/sessions/${state.selected}/attach/transcript?limit=200`).catch(() => ({ entries: [] }));
+  $('transcript').innerHTML = data.entries.length
+    ? data.entries.map((e) => `<div class="ev line"><span class="role">${esc(e.role)}</span><span class="body">${esc(e.kind === 'text' ? e.text : `${e.kind} ${e.text}`)}</span></div>`).join('')
+    : '<div class="empty">No native transcript found for this session yet.</div>';
+}
+
 // Live updates: SSE for events, polling for the aggregate view.
 const source = new EventSource('/api/events');
 source.onopen = () => {
@@ -411,6 +529,7 @@ source.onmessage = (message) => {
 };
 
 await refresh();
+showTab('terminal');
 setInterval(refresh, 2000);
 </script>
 </body>

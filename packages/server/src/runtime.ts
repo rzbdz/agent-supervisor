@@ -5,6 +5,7 @@ import { ClaudeCodeAdapter } from '@supervisor/agent-claude';
 import { FileStore, defaultStateDir } from './store.ts';
 import { serve } from './http.ts';
 import { ORCHESTRATOR_SYSTEM_PROMPT } from './orchestrator.ts';
+import { TmuxTransport } from './terminal.ts';
 
 export interface BootOptions {
   projectRoot: string;
@@ -60,6 +61,7 @@ export class Runtime {
       host: this.#options.host,
       port: this.#options.port,
       webRoot: existsSync(webRoot) ? webRoot : undefined,
+      terminal: new TmuxTransport(),
       onShutdown: () => {
         void this.close().then(() => process.exit(0));
       },
