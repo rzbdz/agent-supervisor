@@ -237,10 +237,11 @@ class TmuxAttach implements AttachHandle {
     // would fight it. The view is read-only until the agent settles.
     if (this.mirror && bytes.length) return;
     if (!bytes.length) return;
-    // `-H` takes hex byte pairs, which survives control characters and
-    // backslashes that `send-keys` would otherwise interpret.
-    const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join(' ');
-    await tmux(['send-keys', '-t', this.target, '-H', ...hex.split(' ')]);
+    // `-H` takes hex byte pairs as separate arguments. Passing them as one
+    // space-joined string makes tmux read a single malformed key, which is
+    // why typing appeared to do nothing; they must be spread here.
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0'));
+    await tmux(['send-keys', '-t', this.target, '-H', ...hex]);
   }
 
   async *output(): AsyncIterable<Uint8Array> {

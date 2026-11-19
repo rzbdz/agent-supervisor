@@ -296,14 +296,20 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
       return streamEvents(req, res, supervisor);
     }
 
-    if (opts.webRoot && req.method === 'GET') {
+    if (opts.webRoot && (req.method === 'GET' || req.method === 'HEAD')) {
       const file = path === '/' ? 'index.html' : path.replace(/^\/+/, '');
       const resolved = join(opts.webRoot, file);
       if (!resolved.startsWith(opts.webRoot)) return sendJson(res, 403, { error: 'forbidden' });
       try {
         const data = await readFile(resolved);
-        res.writeHead(200, { 'content-type': contentType(resolved) });
-        res.end(data);
+        res.writeHead(200, {
+          'content-type': contentType(resolved),
+          'content-length': data.byteLength,
+          'cache-control': 'no-cache',
+        });
+        // HEAD carries the headers and no body; a body on HEAD is a protocol
+        // violation some clients answer by retrying or hanging.
+        res.end(req.method === 'HEAD' ? undefined : data);
         return;
       } catch {
         // Fall through to 404.
