@@ -244,11 +244,17 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
           connection: 'keep-alive',
         });
         let closed = false;
-        req.on('close', () => {
+        // Teardown is idempotent and always runs: a client that navigates
+        // away, a proxy that drops the stream and a normal end all release
+        // the polling loop instead of leaving it running forever.
+        const teardown = () => {
+          if (closed) return;
           closed = true;
           void handle.close();
           attachments.delete(id);
-        });
+        };
+        req.on('close', teardown);
+        res.on('close', teardown);
         const write = (data: string) => {
           if (closed) return;
           // Frames are screen text with a NUL terminator; JSON keeps newlines
@@ -261,6 +267,8 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
           }
         } catch {
           // A detached tmux window ends the stream; the panel re-attaches.
+        } finally {
+          teardown();
         }
         res.end();
         return;
