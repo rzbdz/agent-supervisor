@@ -220,6 +220,18 @@ export function orchestratorTools(supervisor: Supervisor): ToolSpec[] {
       },
     },
     {
+      name: 'list_attention',
+      description:
+        'Workers that settled and need the orchestrator to look: they finished a turn and nobody is waiting on them. Read-only.',
+      audience: 'orchestrator',
+      autoApprove: true,
+      inputSchema: {},
+      handler: async () => {
+        const rows = await supervisor.recentAttention();
+        return { content: JSON.stringify(rows, null, 2) };
+      },
+    },
+    {
       name: 'session_events',
       description: 'Read the most recent events of a session.',
       audience: 'orchestrator',

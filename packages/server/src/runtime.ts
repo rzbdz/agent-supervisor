@@ -75,10 +75,52 @@ export class Runtime {
         role: 'orchestrator',
       });
     }
+    this.#relayAttention(orchestratorName);
   }
 
   get port(): number {
     return this.#server?.port ?? this.#options.port;
+  }
+
+  /**
+   * Forward worker-settled notices into the main conversation.
+   *
+   * Routing is the orchestrator's job, so the supervisor does not decide what
+   * a settled worker means. It only guarantees the fact arrives, once, in the
+   * conversation that owns routing, so the person never has to poll. Notices
+   * are coalesced: a burst of workers settling in the same turn becomes one
+   * message instead of one interruption each.
+   */
+  #relayAttention(orchestratorName: string): void {
+    let pending: string[] = [];
+    let scheduled = false;
+
+    this.supervisor.bus.subscribe((event) => {
+      if (event.type !== 'attention') return;
+      const session = this.supervisor.getSession(event.sessionId);
+      if (!session) return;
+      const line = `${session.name} settled (${event.reason})${
+        event.summary ? `: ${event.summary.split('\n')[0]?.slice(0, 200)}` : ''
+      }`;
+      if (session.name === orchestratorName) return;
+      pending.push(line);
+      if (scheduled) return;
+      scheduled = true;
+      setTimeout(() => {
+        const lines = pending;
+        pending = [];
+        scheduled = false;
+        const main = this.supervisor.findByName(orchestratorName);
+        if (!main || main.state === 'stopped') return;
+        void this.supervisor
+          .send(
+            main.id,
+            `Supervisor notice — workers settled:\n${lines.map((l) => `- ${l}`).join('\n')}\n\n` +
+              'Decide what, if anything, the person needs to know or decide. Call list_attention for the full list. Do not reply if nothing needs them.',
+          )
+          .catch(() => undefined);
+      }, 2000);
+    });
   }
 
   async close(): Promise<void> {

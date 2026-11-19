@@ -246,3 +246,39 @@ describe('autonomy', () => {
     expect(supervisor.getSession(session.id)?.permissionMode).toBe('plan');
   });
 });
+
+describe('attention', () => {
+  it('raises attention when a worker settles, but never for the orchestrator', async () => {
+    const { adapter, supervisor } = makeSupervisor();
+    const events: SessionEvent[] = [];
+    supervisor.bus.subscribe((e) => events.push(e));
+
+    const worker = await supervisor.openSession({ name: 'w1', cwd: '/tmp/x' });
+    const main = await supervisor.openSession({ name: 'main', cwd: '/tmp/x', role: 'orchestrator' });
+
+    for (const session of [worker, main]) {
+      await supervisor.send(session.id, 'do it');
+      adapter.hostFor(session.name).emit({ type: 'turn', phase: 'end', result: 'done' });
+      adapter.hostFor(session.name).emit({ type: 'state', state: 'idle' });
+    }
+
+    const attention = events.filter((e) => e.type === 'attention');
+    expect(attention).toHaveLength(1);
+    expect(attention[0]?.sessionId).toBe(worker.id);
+    expect(attention[0]?.sessionId).toBe(worker.id);
+    if (attention[0]?.type === 'attention') expect(attention[0].summary).toBe('done');
+  });
+
+  it('stays silent while the worker still owes a decision', async () => {
+    const { adapter, supervisor } = makeSupervisor();
+    const events: SessionEvent[] = [];
+    supervisor.bus.subscribe((e) => events.push(e));
+    const worker = await supervisor.openSession({ name: 'w1', cwd: '/tmp/x' });
+    const host = adapter.hostFor('w1');
+    void host.raise({ kind: 'permission', toolName: 'Write', input: {} });
+    await Promise.resolve();
+    host.emit({ type: 'state', state: 'idle' });
+    expect(events.filter((e) => e.type === 'attention')).toHaveLength(0);
+    void worker;
+  });
+});

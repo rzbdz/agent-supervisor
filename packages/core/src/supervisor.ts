@@ -79,6 +79,8 @@ export class Supervisor {
   readonly decisions = new DecisionQueue();
 
   readonly #sessions = new Map<SessionId, ManagedSession>();
+  /** Each session's most recent turn result, for attention summaries. */
+  readonly #lastWords = new Map<SessionId, string>();
   readonly #workspaces = new Map<WorkspaceId, Workspace>();
   #saveChain: Promise<void> = Promise.resolve();
   #seq = 0;
@@ -335,6 +337,33 @@ export class Supervisor {
       .slice(-limit);
   }
 
+  /**
+   * Workers that settled recently, newest first.
+   *
+   * The orchestrator asks this instead of polling sessions: an attention event
+   * is the supervisor's statement that a worker finished and a person has not
+   * been asked anything since.
+   */
+  async recentAttention(limit = 20): Promise<
+    Array<{ session: string; at: string; reason: string; summary: string }>
+  > {
+    const all = await this.#store.readEvents(0, 100_000);
+    const byName = new Map(
+      this.listSessions().map((s) => [s.id as string, s.name] as const),
+    );
+    return all
+      .map((e) => e.event)
+      .filter((e): e is Extract<SessionEvent, { type: 'attention' }> => e.type === 'attention')
+      .slice(-limit)
+      .reverse()
+      .map((e) => ({
+        session: byName.get(e.sessionId) ?? e.sessionId,
+        at: e.at,
+        reason: e.reason,
+        summary: e.summary,
+      }));
+  }
+
   /** Shut everything down; used on process exit. */
   async close(): Promise<void> {
     for (const managed of this.#sessions.values()) {
@@ -411,6 +440,9 @@ export class Supervisor {
         ) {
           return;
         }
+        if (event.type === 'turn' && event.phase === 'end' && event.result) {
+          this.#lastWords.set(managed.id, event.result);
+        }
         this.#emit(managed.id, event);
         if (event.type === 'state') this.#setState(managed, event.state, event.detail);
       },
@@ -437,9 +469,25 @@ export class Supervisor {
     detail?: string,
   ): void {
     if (managed.state === state) return;
+    const previous = managed.state;
     managed.state = state;
     managed.updatedAt = new Date().toISOString();
     this.#emit(managed.id, { type: 'state', state, detail });
+    // A worker that settled is the orchestrator's business: it must be able to
+    // react without the person polling. Orchestrators and interrupted turns
+    // (working -> idle after a decision) are not attention events.
+    const settled = state === 'idle' && previous === 'working';
+    if (
+      settled &&
+      managed.role === 'worker' &&
+      this.decisions.list({ status: 'pending' }).every((d) => d.sessionId !== managed.id)
+    ) {
+      this.#emit(managed.id, {
+        type: 'attention',
+        reason: 'idle',
+        summary: (this.#lastWords.get(managed.id) ?? '').slice(0, 600),
+      });
+    }
     void this.#persist();
   }
 

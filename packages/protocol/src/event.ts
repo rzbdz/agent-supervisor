@@ -61,6 +61,20 @@ export type SessionEvent =
       summary: string;
     }
   | {
+      /**
+       * A worker finished a turn and nobody is waiting on it. The orchestrator
+       * consumes this: a router that never learns its workers finished leaves
+       * the person to poll, which is exactly the attention cost the framework
+       * exists to remove.
+       */
+      type: 'attention';
+      sessionId: SessionId;
+      at: string;
+      reason: 'idle' | 'blocked' | 'failed';
+      /** The agent's own last words for the turn, clipped. */
+      summary: string;
+    }
+  | {
       type: 'error';
       sessionId: SessionId;
       at: string;

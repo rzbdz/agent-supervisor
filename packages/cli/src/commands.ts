@@ -335,6 +335,8 @@ export function formatEvent(event: SessionEvent): string {
       return `⟨decision⟩ ${event.decisionId.slice(0, 8)} ${event.phase}`;
     case 'report':
       return `⟨report⟩ ${event.status}: ${event.summary}`;
+    case 'attention':
+      return `⟨attention⟩ ${event.reason}: ${truncate(event.summary, 200)}`;
     case 'error':
       return `⟨error⟩ ${event.message}`;
   }
