@@ -4,6 +4,9 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Agent Supervisor</title>
+<link rel="stylesheet" href="/vendor/xterm/xterm.css" />
+<script src="/vendor/xterm/xterm.js"></script>
+<script src="/vendor/xterm/addon-fit.js"></script>
 <style>
   :root {
     color-scheme: light dark;
@@ -59,7 +62,7 @@
   main {
     flex: 1;
     display: grid;
-    grid-template-columns: minmax(220px, 300px) 1fr minmax(280px, 420px);
+    grid-template-columns: var(--col-left, 280px) 8px 1fr 8px var(--col-right, 34vw);
     gap: 1px;
     background: var(--line);
     min-height: 0;
@@ -209,17 +212,28 @@
     color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     flex: 1;
   }
-  .term {
-    margin: 0; flex: 1; overflow: auto; padding: 10px 12px;
-    background: #0b0d11; color: #d7dbe2;
-    font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
-    white-space: pre; tab-size: 4;
+  /* xterm owns its own canvas; the wrapper only gives it a box and padding. */
+  .termwrap {
+    flex: 1; min-height: 0; padding: 8px 10px; background: #0b0d11;
   }
+  .term { width: 100%; height: 100%; }
+  .grip {
+    background: var(--line); cursor: col-resize; position: relative;
+    touch-action: none;
+  }
+  .grip::after {
+    content: ''; position: absolute; inset: 0 2px; border-radius: 2px;
+    background: transparent;
+  }
+  .grip:hover::after, .grip.dragging::after { background: var(--accent); opacity: .45; }
+  .termbar .zoom { display: flex; gap: 4px; }
+  .termbar .zoom button { padding: 2px 8px; font-size: 11px; }
   .ev.line { display: flex; gap: 8px; }
   .ev.line .role { color: var(--muted); min-width: 44px; }
   @media (max-width: 900px) {
     main { grid-template-columns: 1fr; grid-template-rows: auto 1fr auto; }
-    main section:nth-child(3) { max-height: 40vh; }
+    .grip { display: none; }
+    main section:nth-child(5) { max-height: 40vh; }
   }
 </style>
 </head>
@@ -235,6 +249,7 @@
     <div class="head">Sessions <span class="count" id="sessionCount"></span></div>
     <div class="scroll" id="sessions"></div>
   </section>
+  <div class="grip" id="gripLeft" title="Drag to resize"></div>
   <section>
     <div class="head">Decisions <span class="count" id="decisionCount"></span></div>
     <div class="scroll" id="decisions"></div>
@@ -243,6 +258,7 @@
       <button class="primary" id="send">Send</button>
     </div>
   </section>
+  <div class="grip" id="gripRight" title="Drag to resize"></div>
   <section>
     <div class="head">
       <button class="tab active" data-tab="terminal">Terminal</button>
@@ -252,9 +268,14 @@
     </div>
     <div class="termbar" id="termbar" hidden>
       <span class="mono" id="attachCmd"></span>
+      <span class="hint" id="termState"></span>
+      <span class="zoom">
+        <button id="zoomOut" title="Smaller text">A−</button>
+        <button id="zoomIn" title="Bigger text">A+</button>
+      </span>
       <button id="termReconnect" title="Re-attach the terminal">Reattach</button>
     </div>
-    <pre class="term" id="term" hidden></pre>
+    <div class="termwrap" id="termwrap" hidden><div class="term" id="term"></div></div>
     <div class="scroll feed" id="transcript" hidden></div>
     <div class="scroll feed" id="feed"></div>
     <div class="composer" id="termcomposer" hidden>
@@ -432,17 +453,51 @@ $('send').onclick = async () => {
 $('message').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('send').click(); });
 
 // --- terminal / transcript panel -----------------------------------------
-const ui = { tab: 'terminal', attach: null, attachFor: null, es: null };
+// xterm.js renders the bytes; the server only ships frames. Frames are full
+// screen redraws from tmux capture-pane, so the client resets and writes each
+// one — simple and always consistent with what tmux actually shows.
+const ui = { tab: 'terminal', attach: null, attachFor: null, es: null, term: null, fit: null };
+
+function ensureXterm() {
+  if (ui.term) return;
+  const term = new Terminal({
+    convertEol: true,
+    cursorBlink: false,
+    scrollback: 5000,
+    fontSize: layout.term,
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+    theme: { background: '#0b0d11', foreground: '#d7dbe2' },
+  });
+  const fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open($('term'));
+  ui.term = term;
+  ui.fit = fit;
+  // Input is forwarded as keystrokes; the server turns them into tmux keys.
+  term.onData((data) => {
+    if (!state.selected) return;
+    void api(`/api/sessions/${state.selected}/attach/input`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: data }),
+    }).catch(() => undefined);
+  });
+  fitTerm();
+}
+
+function fitTerm() {
+  if (!ui.fit || ui.tab !== 'terminal') return;
+  try { ui.fit.fit(); } catch { /* xterm is not laid out yet */ }
+}
 
 function showTab(tab) {
   ui.tab = tab;
   for (const b of document.querySelectorAll('.head .tab')) b.classList.toggle('active', b.dataset.tab === tab);
-  $('term').hidden = tab !== 'terminal';
+  $('termwrap').hidden = tab !== 'terminal';
   $('termbar').hidden = tab !== 'terminal';
   $('termcomposer').hidden = tab !== 'terminal';
   $('transcript').hidden = tab !== 'transcript';
   $('feed').hidden = tab !== 'activity';
-  if (tab === 'terminal') ensureAttach();
+  if (tab === 'terminal') { ensureXterm(); fitTerm(); ensureAttach(); }
   if (tab === 'transcript') loadTranscript();
 }
 for (const b of document.querySelectorAll('.head .tab')) b.onclick = () => showTab(b.dataset.tab);
@@ -454,38 +509,49 @@ function detachStream() {
 /**
  * Open (or reuse) this session's terminal and follow its output.
  *
- * The pane shows the agent's native terminal: the tmux window the supervisor
- * created for the session, so what a person sees here is exactly what they
- * would see attaching with `tmux attach`. Input goes back through the same
- * route, which is how an agent blocked on nothing can still be typed into.
+ * A live agent's pane is a read-only mirror of its own session; a stopped
+ * agent's pane runs `claude --resume` and accepts input, so the person takes
+ * over the same conversation.
  */
 async function ensureAttach() {
-  if (!state.selected) return;
+  if (!state.selected || !ui.term) return;
   if (ui.attachFor === state.selected && ui.es) return;
   detachStream();
   ui.attachFor = state.selected;
-  const size = { cols: Math.max(60, Math.floor($('term').clientWidth / 7.2)), rows: Math.max(20, Math.floor($('term').clientHeight / 16)) };
+  const size = termSize();
   try {
     ui.attach = await api(`/api/sessions/${state.selected}/attach`, {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(size),
     });
   } catch (error) {
-    $('term').textContent = `terminal unavailable: ${error.message}`;
+    ui.term.reset();
+    ui.term.write(`terminal unavailable: ${error.message}\r\n`);
     return;
   }
+  ui.term.reset();
   $('attachCmd').textContent = ui.attach.attachCommand;
+  $('termState').textContent = ui.attach.live
+    ? 'live agent — read-only mirror of its session'
+    : 'stopped agent — resumed in tmux, you can type';
+  $('termcomposer').hidden = Boolean(ui.attach.live);
   const es = new EventSource(`/api/sessions/${state.selected}/attach/stream`);
   ui.es = es;
   es.onmessage = (m) => {
     let payload;
     try { payload = JSON.parse(m.data); } catch { return; }
     const frame = String(payload.frame || '').replace(/\u0000+$/, '');
-    const term = $('term');
-    const atBottom = term.scrollTop + term.clientHeight >= term.scrollHeight - 24;
-    term.textContent = frame;
-    if (atBottom) term.scrollTop = term.scrollHeight;
+    ui.term.reset();
+    ui.term.write(frame);
+    ui.term.scrollToBottom();
   };
-  es.onerror = () => { $('attachCmd').textContent = `${ui.attach?.attachCommand ?? ''} — disconnected`; };
+  es.onerror = () => {
+    $('attachCmd').textContent = `${ui.attach?.attachCommand ?? ''} — disconnected (Reattach to retry)`;
+  };
+}
+
+function termSize() {
+  if (!ui.term) return { cols: 120, rows: 32 };
+  return { cols: ui.term.cols, rows: ui.term.rows };
 }
 
 $('termReconnect').onclick = () => { if (state.selected) { ui.attachFor = null; ensureAttach(); } };
@@ -506,6 +572,87 @@ async function loadTranscript() {
   $('transcript').innerHTML = data.entries.length
     ? data.entries.map((e) => `<div class="ev line"><span class="role">${esc(e.role)}</span><span class="body">${esc(e.kind === 'text' ? e.text : `${e.kind} ${e.text}`)}</span></div>`).join('')
     : '<div class="empty">No native transcript found for this session yet.</div>';
+}
+
+// --- layout: resizable columns and terminal zoom --------------------------
+// Sizes are a per-viewer convenience, so they live in localStorage and never
+// reach the supervisor.
+const layout = {
+  left: Number(localStorage.getItem('sv.left') || 280),
+  right: Number(localStorage.getItem('sv.right') || Math.round(window.innerWidth * 0.34)),
+  term: Number(localStorage.getItem('sv.term') || 12),
+};
+
+function applyLayout() {
+  const root = document.documentElement;
+  root.style.setProperty('--col-left', `${layout.left}px`);
+  root.style.setProperty('--col-right', `${layout.right}px`);
+  root.style.setProperty('--term-size', `${layout.term}px`);
+}
+
+function dragGrip(grip, which) {
+  grip.addEventListener('pointerdown', (event) => {
+    event.preventDefault();
+    grip.setPointerCapture(event.pointerId);
+    grip.classList.add('dragging');
+    const startX = event.clientX;
+    const start = which === 'left' ? layout.left : layout.right;
+    const move = (e) => {
+      const delta = e.clientX - startX;
+      if (which === 'left') layout.left = clamp(start + delta, 200, 520);
+      else layout.right = clamp(start - delta, 280, window.innerWidth - 360);
+      applyLayout();
+    };
+    const up = () => {
+      grip.classList.remove('dragging');
+      grip.releasePointerCapture(event.pointerId);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      localStorage.setItem(which === 'left' ? 'sv.left' : 'sv.right', String(layout[which]));
+      resizeTerminal();
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+}
+
+const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+/** Tell the terminal, and its tmux window, the new character grid. */
+function resizeTerminal() {
+  if (ui.tab !== 'terminal' || !state.selected) return;
+  const size = terminalSize();
+  void api(`/api/sessions/${state.selected}/attach/resize`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(size),
+  }).catch(() => undefined);
+}
+
+function terminalSize() {
+  const term = $('term');
+  // Measured from the live font metrics rather than assumed glyph widths.
+  const probe = document.createElement('span');
+  probe.style.cssText = `font: ${layout.term}px ui-monospace, monospace; position: absolute; visibility: hidden; white-space: pre;`;
+  probe.textContent = 'M'.repeat(20);
+  document.body.appendChild(probe);
+  const charWidth = probe.getBoundingClientRect().width / 20 || 7;
+  probe.remove();
+  return {
+    cols: Math.max(40, Math.floor((term.clientWidth - 24) / charWidth)),
+    rows: Math.max(12, Math.floor((term.clientHeight - 20) / (layout.term * 1.35))),
+  };
+}
+
+applyLayout();
+dragGrip($('gripLeft'), 'left');
+dragGrip($('gripRight'), 'right');
+window.addEventListener('resize', () => { applyLayout(); resizeTerminal(); });
+
+$('zoomIn').onclick = () => { layout.term = clamp(layout.term + 1, 9, 20); persistTerm(); };
+$('zoomOut').onclick = () => { layout.term = clamp(layout.term - 1, 9, 20); persistTerm(); };
+function persistTerm() {
+  applyLayout();
+  localStorage.setItem('sv.term', String(layout.term));
+  resizeTerminal();
 }
 
 // Live updates: SSE for events, polling for the aggregate view.

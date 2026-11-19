@@ -42,7 +42,12 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
   async function attachFor(
     transport: TerminalTransport,
     id: import('@supervisor/protocol').SessionId,
-    session: { name: string; cwd: string },
+    session: {
+      name: string;
+      cwd: string;
+      state: string;
+      nativeSessionId?: string;
+    },
     size: { cols: number; rows: number },
   ): Promise<AttachHandle> {
     const existing = attachments.get(id);
@@ -53,6 +58,8 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
       label: session.name,
       cols: size.cols,
       rows: size.rows,
+      nativeSessionId: session.nativeSessionId,
+      live: session.state !== 'stopped',
     });
     attachments.set(id, handle);
     return handle;
