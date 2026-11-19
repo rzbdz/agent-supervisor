@@ -121,3 +121,23 @@ endpoints, selected by config; routes, payload and panel stay untouched.
 - `close()` detaches only, honouring "an agent blocked on a human stays blocked".
 - Agent-driven control = skill over MCP or native tool (§3).
 - The panel renders decisions and forwards answers; auto-answer is out of scope.
+
+## Implementation status (supersedes parts of §4)
+
+The terminal port is implemented in `packages/server/src/terminal.ts` and the
+panel is live, which pins down three things this document left open:
+
+1. **A live agent's pane is its own session, read-only.** The supervisor's
+   process owns that agent's stdin, so typing into the pane would race the
+   client. The pane mirrors the agent's native transcript, rendered as ANSI
+   frames and drawn by xterm.js.
+2. **A stopped agent's pane resumes the conversation.** The window runs
+   `claude --resume <nativeSessionId>`, so the person takes over exactly where
+   the agent stopped, rather than starting in an empty shell. This is the
+   answer to "打开 Claude" from the reference UI.
+3. **Frames are full screen redraws**, not byte deltas: `tmux capture-pane -p -e`
+   on a short interval. It is enough for an operator view, needs no FIFO, and
+   the port hides the difference from a future byte-accurate relay.
+
+The shipped tmux config covers mouse focus and scrolling, left-drag selection,
+a right-click copy/paste menu, vi copy-mode, truecolor and a large scrollback.
