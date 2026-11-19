@@ -75,7 +75,23 @@ export interface AgentSession {
   stop(): Promise<void>;
   /** Whether a turn is currently running. */
   isRunning(): boolean;
+  /** Change how the runtime decides routine actions, when it supports it. */
+  setPermissionMode?(mode: PermissionMode): Promise<void>;
 }
+
+/**
+ * How much the runtime decides on its own.
+ *
+ * - `auto` — a classifier handles routine, low-risk actions; anything it
+ *   cannot judge escalates to `canUseTool`, which is where a person decides.
+ *   This is the default: routine reads and edits must not cost attention.
+ * - `default` — every approval-shaped action reaches a person.
+ * - `plan` — the agent researches and proposes; leaving plan mode is a
+ *   decision for a person.
+ * - `bypassPermissions` is deliberately not offered: it would skip the
+ *   escalation path the framework exists to provide.
+ */
+export type PermissionMode = 'auto' | 'default' | 'plan' | 'acceptEdits';
 
 /** Starts agent sessions of one kind. */
 export interface AgentAdapter {
@@ -139,6 +155,8 @@ export interface PersistedSession {
   /** Organization role within a workspace, e.g. architect. */
   agentRole?: string;
   workspaceId?: string;
+  /** Runtime autonomy; defaults to `auto`. */
+  permissionMode?: PermissionMode;
   nativeSessionId?: string;
   state: 'idle' | 'stopped';
   createdAt: string;

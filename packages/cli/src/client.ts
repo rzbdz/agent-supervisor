@@ -20,6 +20,9 @@ export interface SessionView {
   purpose?: string;
   model?: string;
   role: 'worker' | 'orchestrator';
+  agentRole?: string;
+  workspaceId?: string;
+  permissionMode: 'auto' | 'default' | 'plan' | 'acceptEdits';
   state: 'starting' | 'idle' | 'working' | 'waiting' | 'stopped';
   nativeSessionId?: string;
   createdAt: string;
@@ -63,6 +66,13 @@ export class SupervisorClient {
 
   async stop(session: SessionId): Promise<void> {
     await this.#request('POST', `/api/sessions/${session}/stop`);
+  }
+
+  async setPermissionMode(
+    session: SessionId,
+    mode: 'auto' | 'default' | 'plan' | 'acceptEdits',
+  ): Promise<void> {
+    await this.#request('POST', `/api/sessions/${session}/permission-mode`, { mode });
   }
 
   async interrupt(session: SessionId): Promise<void> {

@@ -148,6 +148,10 @@ export function orchestratorTools(supervisor: Supervisor): ToolSpec[] {
           .string()
           .optional()
           .describe('Workspace to group this agent under; defaults to the one at cwd.'),
+        permissionMode: z
+          .enum(['auto', 'default', 'plan', 'acceptEdits'])
+          .optional()
+          .describe('autonomy; defaults to auto.'),
         task: z
           .string()
           .optional()
@@ -163,6 +167,12 @@ export function orchestratorTools(supervisor: Supervisor): ToolSpec[] {
           workspaceId: args.workspaceId
             ? (String(args.workspaceId) as import('@supervisor/protocol').WorkspaceId)
             : undefined,
+          permissionMode: args.permissionMode as
+            | 'auto'
+            | 'default'
+            | 'plan'
+            | 'acceptEdits'
+            | undefined,
         });
         if (typeof args.task === 'string' && args.task.trim()) {
           // Send through the supervisor so the session is marked working

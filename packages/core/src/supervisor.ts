@@ -11,6 +11,7 @@ import type {
   AgentHost,
   AgentSession,
   LoggedEvent,
+  PermissionMode,
   PersistedState,
   StateStore,
   ToolSpec,
@@ -40,6 +41,8 @@ export interface OpenSessionRequest {
   workspaceId?: WorkspaceId;
   /** Organization role within the workspace, e.g. architect / backend. */
   agentRole?: string;
+  /** Runtime autonomy; `auto` (the default) keeps routine actions quiet. */
+  permissionMode?: PermissionMode;
 }
 
 export interface SessionView {
@@ -52,6 +55,8 @@ export interface SessionView {
   role: 'worker' | 'orchestrator';
   /** Organization role within its workspace, when set. */
   agentRole?: string;
+  /** Runtime autonomy for this session. */
+  permissionMode: PermissionMode;
   workspaceId?: WorkspaceId;
   state: 'starting' | 'idle' | 'working' | 'waiting' | 'stopped';
   nativeSessionId?: string;
@@ -141,6 +146,7 @@ export class Supervisor {
         role: session.role ?? 'worker',
         agentRole: session.agentRole,
         workspaceId: session.workspaceId ? asWorkspaceId(session.workspaceId) : undefined,
+        permissionMode: session.permissionMode ?? 'auto',
         nativeSessionId: session.nativeSessionId,
         // A stopped session stays stopped but remains addressable: sending it
         // a message resumes its native conversation instead of losing it.
@@ -238,6 +244,7 @@ export class Supervisor {
       role: request.role ?? 'worker',
       agentRole: request.agentRole,
       workspaceId,
+      permissionMode: request.permissionMode ?? 'auto',
       state: 'starting',
       createdAt: now,
       updatedAt: now,
@@ -262,6 +269,33 @@ export class Supervisor {
 
   async interrupt(id: SessionId): Promise<void> {
     await this.#require(id).runtime?.interrupt();
+  }
+
+  /** Change a live session's autonomy without restarting it. */
+  /**
+   * Change a session's autonomy, live or not.
+   *
+   * `plan` and `auto` are the two modes an operator switches between: plan
+   * makes the agent propose before acting, auto lets routine work proceed and
+   * escalates only what the classifier cannot judge. A stopped session keeps
+   * the new mode for its next resume; the mode is part of the session record,
+   * not of the process.
+   */
+  async setPermissionMode(id: SessionId, mode: PermissionMode): Promise<void> {
+    const managed = this.#require(id);
+    if (managed.permissionMode === mode) return;
+    managed.permissionMode = mode;
+    managed.updatedAt = new Date().toISOString();
+    await managed.runtime?.setPermissionMode?.(mode);
+    // A live runtime reports the change; a stopped one needs the event here.
+    if (!managed.runtime) {
+      this.#emit(managed.id, {
+        type: 'state',
+        state: managed.state,
+        detail: `permission mode ${mode}`,
+      });
+    }
+    await this.#persist();
   }
 
   async stop(id: SessionId): Promise<void> {
@@ -326,6 +360,7 @@ export class Supervisor {
         model: managed.model,
         workspaceId: managed.workspaceId,
         role: managed.agentRole,
+        permissionMode: managed.permissionMode,
         options: workspace ? { workspaceRoot: workspace.root } : undefined,
       },
       host,
@@ -443,6 +478,7 @@ export class Supervisor {
         role: s.role,
         agentRole: s.agentRole,
         workspaceId: s.workspaceId,
+        permissionMode: s.permissionMode,
         nativeSessionId: s.nativeSessionId,
         state: s.state === 'stopped' ? 'stopped' : 'idle',
         createdAt: s.createdAt,

@@ -184,8 +184,7 @@ describe('supervisor sessions', () => {
     void adapter;
   });
 
-  it('loads previously pending decisions as expired, never as answerable', async () => {
-    const { supervisor, store } = makeSupervisor();
+  it('loads previously pending decisions as expired, never as answerable', async () => {    const { supervisor, store } = makeSupervisor();
     store.state = {
       sessions: [],
       pendingDecisions: [
@@ -205,5 +204,45 @@ describe('supervisor sessions', () => {
     expect(() =>
       supervisor.answerDecision('d1' as never, { kind: 'permission', behavior: 'allow' }),
     ).toThrow(/expired/);
+  });
+});
+
+describe('autonomy', () => {
+  it('defaults to auto so routine actions never cost attention', async () => {
+    const { supervisor } = makeSupervisor();
+    const session = await supervisor.openSession({ name: 'w1', cwd: '/tmp/x' });
+    expect(session.permissionMode).toBe('auto');
+  });
+
+  it('switches a live session between auto and plan through the runtime', async () => {
+    const modes: string[] = [];
+    const adapter: AgentAdapter = {
+      kind: 'fake-live',
+      async start(spec) {
+        return {
+          send: async () => undefined,
+          interrupt: async () => undefined,
+          stop: async () => undefined,
+          isRunning: () => false,
+          setPermissionMode: async (mode) => {
+            modes.push(mode);
+          },
+        };
+      },
+    };
+    const supervisor = new Supervisor({ adapter, store: new MemoryStore() });
+    const session = await supervisor.openSession({ name: 'w1', cwd: '/tmp/x' });
+    await supervisor.setPermissionMode(session.id, 'plan');
+    await supervisor.setPermissionMode(session.id, 'auto');
+    expect(modes).toEqual(['plan', 'auto']);
+    expect(supervisor.getSession(session.id)?.permissionMode).toBe('auto');
+  });
+
+  it('keeps a mode change for a stopped session so the resume honours it', async () => {
+    const { supervisor } = makeSupervisor();
+    const session = await supervisor.openSession({ name: 'w1', cwd: '/tmp/x' });
+    await supervisor.stop(session.id);
+    await supervisor.setPermissionMode(session.id, 'plan');
+    expect(supervisor.getSession(session.id)?.permissionMode).toBe('plan');
   });
 });

@@ -130,7 +130,10 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       settingSources: [],
       strictMcpConfig: true,
       mcpServers: { supervisor: mcpServer },
-      permissionMode: 'default',
+      // `auto`: a classifier handles routine, low-risk actions so they never
+      // cost the human attention. Anything it cannot judge escalates to
+      // `canUseTool` below, which is exactly where a person decides.
+      permissionMode: spec.permissionMode ?? 'auto',
       // Only the supervision channel bypasses the prompt; every other tool
       // call still reaches `canUseTool`.
       allowedTools: extra.tools
@@ -186,6 +189,11 @@ class ClaudeSession implements AgentSession {
 
   async interrupt(): Promise<void> {
     await this.query.interrupt();
+  }
+
+  /** Live changes are supported in streaming-input mode. */
+  async setPermissionMode(mode: NonNullable<SpawnSpec['permissionMode']>): Promise<void> {
+    await this.query.setPermissionMode(mode);
   }
 
   async stop(): Promise<void> {

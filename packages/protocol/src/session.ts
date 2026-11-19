@@ -60,6 +60,11 @@ export interface SpawnSpec {
   workspaceId?: WorkspaceId;
   /** Organization role of this agent, e.g. architect / backend / frontend. */
   role?: string;
+  /**
+   * How much the runtime decides alone. `auto` keeps routine actions out of
+   * the human queue; anything the classifier cannot judge escalates.
+   */
+  permissionMode?: 'auto' | 'default' | 'plan' | 'acceptEdits';
   /** Extra adapter-specific settings (adapter validates them). */
   options?: Record<string, unknown>;
 }

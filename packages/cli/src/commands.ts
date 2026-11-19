@@ -77,7 +77,7 @@ export function buildProgram(): Command {
       for (const session of sessions) {
         const flag = session.state === 'waiting' ? '  ← needs you' : '';
         console.log(
-          `  ${session.name.padEnd(18)} ${session.state.padEnd(9)} ${session.role.padEnd(12)} ${session.cwd}${flag}`,
+          `  ${session.name.padEnd(18)} ${session.state.padEnd(9)} ${(session.agentRole ?? session.role).padEnd(12)} ${session.permissionMode.padEnd(7)} ${session.cwd}${flag}`,
         );
       }
       console.log(pending.length ? '\nWAITING FOR A DECISION' : '\nWAITING FOR A DECISION (none)');
@@ -123,6 +123,19 @@ export function buildProgram(): Command {
       const target = await findSession(client, name);
       await client.stop(target.id);
       print(program, { ok: true }, `stopped ${target.name}`);
+    });
+
+  program
+    .command('mode <session> <mode>')
+    .description('Set a session autonomy: auto (default) or plan')
+    .action(async (name: string, mode: string) => {
+      if (!['auto', 'default', 'plan', 'acceptEdits'].includes(mode)) {
+        throw new Error('mode must be one of: auto, default, plan, acceptEdits');
+      }
+      const client = clientFor(program);
+      const target = await findSession(client, name);
+      await client.setPermissionMode(target.id, mode as never);
+      print(program, { ok: true, mode }, `${target.name} → ${mode}`);
     });
 
   program

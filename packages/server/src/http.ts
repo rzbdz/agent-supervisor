@@ -113,6 +113,7 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
         model: body.model ? String(body.model) : undefined,
         role: body.role === 'orchestrator' ? 'orchestrator' : 'worker',
         agentRole: body.agentRole ? String(body.agentRole) : undefined,
+        permissionMode: body.permissionMode ? (String(body.permissionMode) as never) : undefined,
         workspaceId: body.workspaceId
           ? asWorkspaceId(String(body.workspaceId))
           : undefined,
@@ -121,7 +122,9 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
       return sendJson(res, 201, session);
     }
 
-    const sessionMatch = /^\/api\/sessions\/([^/]+)(?:\/([a-z]+))?$/.exec(path);
+    // Action segments may contain hyphens (`permission-mode`), so the pattern
+    // must allow them; `[a-z]+` silently 404s such routes.
+    const sessionMatch = /^\/api\/sessions\/([^/]+)(?:\/([a-z-]+))?$/.exec(path);
     if (sessionMatch) {
       const id = asSessionId(decodeURIComponent(sessionMatch[1]!));
       const action = sessionMatch[2];
@@ -134,6 +137,15 @@ export function serve(options: ServeOptions): Promise<{ close(): Promise<void>; 
         if (!body.text) return sendJson(res, 400, { error: 'text is required' });
         await supervisor.send(id, String(body.text));
         return sendJson(res, 202, { ok: true });
+      }
+      if (action === 'permission-mode' && req.method === 'POST') {
+        const body = await readJson(req);
+        const mode = String(body.mode);
+        if (!['auto', 'default', 'plan', 'acceptEdits'].includes(mode)) {
+          return sendJson(res, 400, { error: 'invalid mode' });
+        }
+        await supervisor.setPermissionMode(id, mode as never);
+        return sendJson(res, 202, { ok: true, mode });
       }
       if (action === 'interrupt' && req.method === 'POST') {
         await supervisor.interrupt(id);
